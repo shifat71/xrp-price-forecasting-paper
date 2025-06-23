@@ -136,9 +136,7 @@ dmypy.json
 *.model
 *.weights
 
-# Prediction outputs
-prediction_output*.json
-*_prediction_*.json
+# Note: JSON files are kept for datasets and outputs
 
 # Generated plots and images
 *.png
@@ -181,10 +179,9 @@ api_keys.json
 .env.production
 .env.development
 
-# Large dataset files (uncomment if you want to ignore them)
-# dataset/*.json
-# *.csv
-# *.parquet
+# Note: Dataset JSON files and prediction outputs are kept
+# Large dataset files (uncomment specific patterns if needed)
+# dataset/very_large_file.json
 
 # Checkpoint files
 checkpoint/
