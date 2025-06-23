@@ -5,17 +5,16 @@ from datetime import datetime, timedelta
 import os
 import glob
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.multioutput import MultiOutputRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error
-import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
 import warnings
 warnings.filterwarnings('ignore')
 
-class XRPPriceForecaster:
+class XRPPriceForecasterSimple:
     def __init__(self, sequence_length=20, prediction_hours=1):
         """
-        Initialize the XRP price forecasting model
+        Simplified XRP price forecasting model using Random Forest
         
         Args:
             sequence_length (int): Number of previous timesteps to use for prediction
@@ -128,13 +127,12 @@ class XRPPriceForecaster:
         
         return df
     
-    def create_sequences(self, data, target_column='close'):
+    def create_sequences(self, data):
         """
-        Create sequences for LSTM training
+        Create sequences for training
         
         Args:
             data (np.array): Preprocessed data
-            target_column (str): Column to predict
             
         Returns:
             tuple: (X, y) sequences for training
@@ -142,53 +140,23 @@ class XRPPriceForecaster:
         X, y = [], []
         
         for i in range(self.sequence_length, len(data) - self.prediction_steps + 1):
-            # Input sequence
-            X.append(data[i-self.sequence_length:i])
+            # Input sequence - flatten the sequence
+            sequence = data[i-self.sequence_length:i].flatten()
+            X.append(sequence)
             
-            # Target sequence (next prediction_steps values)
+            # Target sequence (next prediction_steps close prices)
             y.append(data[i:i+self.prediction_steps, 3])  # Index 3 is close price
         
         return np.array(X), np.array(y)
     
-    def build_model(self, input_shape):
-        """
-        Build the LSTM model architecture
-        
-        Args:
-            input_shape (tuple): Shape of input data
-            
-        Returns:
-            tensorflow.keras.Model: Compiled LSTM model
-        """
-        model = Sequential([
-            LSTM(128, return_sequences=True, input_shape=input_shape),
-            Dropout(0.2),
-            LSTM(64, return_sequences=True),
-            Dropout(0.2),
-            LSTM(32, return_sequences=False),
-            Dropout(0.2),
-            Dense(64, activation='relu'),
-            Dense(32, activation='relu'),
-            Dense(self.prediction_steps, activation='linear')
-        ])
-        
-        model.compile(
-            optimizer='adam',
-            loss='mse',
-            metrics=['mae']
-        )
-        
-        return model
-    
-    def train(self, dataset_folder="dataset", validation_split=0.2, epochs=100, batch_size=32):
+    def train(self, dataset_folder="dataset", validation_split=0.2, n_estimators=100):
         """
         Train the model on the dataset
         
         Args:
             dataset_folder (str): Path to dataset folder
             validation_split (float): Fraction of data to use for validation
-            epochs (int): Number of training epochs
-            batch_size (int): Training batch size
+            n_estimators (int): Number of trees in random forest
         """
         print("Loading and preparing data...")
         
@@ -224,46 +192,33 @@ class XRPPriceForecaster:
         X_train, X_val = X[:split_idx], X[split_idx:]
         y_train, y_val = y[:split_idx], y[split_idx:]
         
-        # Build model
-        self.model = self.build_model((X.shape[1], X.shape[2]))
+        # Build model (Random Forest with MultiOutput)
+        base_model = RandomForestRegressor(
+            n_estimators=n_estimators,
+            random_state=42,
+            n_jobs=-1
+        )
+        self.model = MultiOutputRegressor(base_model, n_jobs=-1)
         
-        print("Model architecture:")
-        self.model.summary()
+        print("Training Random Forest model...")
         
         # Train model
-        print("\nStarting training...")
-        history = self.model.fit(
-            X_train, y_train,
-            validation_data=(X_val, y_val),
-            epochs=epochs,
-            batch_size=batch_size,
-            verbose=1,
-            callbacks=[
-                tf.keras.callbacks.EarlyStopping(
-                    monitor='val_loss',
-                    patience=10,
-                    restore_best_weights=True
-                ),
-                tf.keras.callbacks.ReduceLROnPlateau(
-                    monitor='val_loss',
-                    factor=0.5,
-                    patience=5,
-                    min_lr=1e-7
-                )
-            ]
-        )
+        self.model.fit(X_train, y_train)
         
         self.is_trained = True
         print("Training completed!")
         
         # Evaluate model
-        train_loss = self.model.evaluate(X_train, y_train, verbose=0)
-        val_loss = self.model.evaluate(X_val, y_val, verbose=0)
+        train_pred = self.model.predict(X_train)
+        val_pred = self.model.predict(X_val)
         
-        print(f"\nFinal Training Loss: {train_loss[0]:.6f}")
-        print(f"Final Validation Loss: {val_loss[0]:.6f}")
+        train_mae = mean_absolute_error(y_train, train_pred)
+        val_mae = mean_absolute_error(y_val, val_pred)
         
-        return history
+        print(f"\nFinal Training MAE: {train_mae:.6f}")
+        print(f"Final Validation MAE: {val_mae:.6f}")
+        
+        return None
     
     def predict(self, recent_data_file, output_file="prediction_output.json"):
         """
@@ -314,16 +269,17 @@ class XRPPriceForecaster:
         if len(scaled_data) < self.sequence_length:
             raise ValueError(f"Recent data must have at least {self.sequence_length} data points")
         
-        # Prepare input for prediction
-        X_pred = scaled_data[-self.sequence_length:].reshape(1, self.sequence_length, -1)
+        # Prepare input for prediction - flatten the sequence
+        X_pred = scaled_data[-self.sequence_length:].flatten().reshape(1, -1)
         
         # Make prediction
-        prediction = self.model.predict(X_pred, verbose=0)
+        prediction = self.model.predict(X_pred)
+        predicted_prices = prediction[0]
         
-        # Inverse transform the prediction (only the close price)
+        # Inverse transform the prediction
         # Create a dummy array with the same shape as the original features
         dummy_features = np.zeros((self.prediction_steps, len(feature_columns)))
-        dummy_features[:, 3] = prediction[0]  # Close price is at index 3
+        dummy_features[:, 3] = predicted_prices  # Close price is at index 3
         
         # Inverse transform
         prediction_inversed = self.scaler.inverse_transform(dummy_features)
@@ -342,7 +298,6 @@ class XRPPriceForecaster:
         
         for i, (timestamp, price) in enumerate(zip(prediction_timestamps, predicted_prices)):
             # For simplicity, we'll use the predicted price as OHLC
-            # In a more sophisticated model, you could predict OHLC separately
             prediction_data.append({
                 "timestamp_ms": int(timestamp.timestamp() * 1000),
                 "datetime": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
@@ -371,6 +326,7 @@ class XRPPriceForecaster:
                 "interval": "3min",
                 "prediction_type": "next_hour_forecast",
                 "model_info": {
+                    "model_type": "RandomForest",
                     "sequence_length": self.sequence_length,
                     "prediction_hours": self.prediction_hours,
                     "prediction_steps": self.prediction_steps
@@ -388,7 +344,7 @@ class XRPPriceForecaster:
         
         return output_data
     
-    def save_model(self, model_path="xrp_forecaster_model.h5", scaler_path="scaler.pkl"):
+    def save_model(self, model_path="xrp_forecaster_simple.pkl", scaler_path="scaler_simple.pkl"):
         """
         Save the trained model and scaler
         
@@ -399,16 +355,18 @@ class XRPPriceForecaster:
         if not self.is_trained:
             raise ValueError("Model must be trained before saving")
         
-        self.model.save(model_path)
-        
         import pickle
+        
+        with open(model_path, 'wb') as f:
+            pickle.dump(self.model, f)
+        
         with open(scaler_path, 'wb') as f:
             pickle.dump(self.scaler, f)
         
         print(f"Model saved to: {model_path}")
         print(f"Scaler saved to: {scaler_path}")
     
-    def load_model(self, model_path="xrp_forecaster_model.h5", scaler_path="scaler.pkl"):
+    def load_model(self, model_path="xrp_forecaster_simple.pkl", scaler_path="scaler_simple.pkl"):
         """
         Load a pre-trained model and scaler
         
@@ -416,9 +374,11 @@ class XRPPriceForecaster:
             model_path (str): Path to the saved model
             scaler_path (str): Path to the saved scaler
         """
-        self.model = tf.keras.models.load_model(model_path)
-        
         import pickle
+        
+        with open(model_path, 'rb') as f:
+            self.model = pickle.load(f)
+        
         with open(scaler_path, 'rb') as f:
             self.scaler = pickle.load(f)
         
@@ -429,22 +389,21 @@ class XRPPriceForecaster:
 
 def main():
     """
-    Example usage of the XRP Price Forecaster
+    Example usage of the XRP Price Forecaster (Simple version)
     """
     # Initialize the forecaster
-    forecaster = XRPPriceForecaster(sequence_length=20, prediction_hours=1)
+    forecaster = XRPPriceForecasterSimple(sequence_length=20, prediction_hours=1)
     
     # Train the model
-    print("Training XRP Price Forecasting Model...")
-    history = forecaster.train(
+    print("Training XRP Price Forecasting Model (Random Forest)...")
+    forecaster.train(
         dataset_folder="dataset",
         validation_split=0.2,
-        epochs=50,
-        batch_size=32
+        n_estimators=100
     )
     
     # Save the trained model
-    forecaster.save_model("xrp_forecaster_model.h5", "scaler.pkl")
+    forecaster.save_model("xrp_forecaster_simple.pkl", "scaler_simple.pkl")
     
     print("\nModel training completed!")
     print("To make predictions, use the predict() method with recent 1-hour data.")
@@ -452,5 +411,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
