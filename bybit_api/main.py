@@ -25,9 +25,9 @@ def main():
         session=SESSION,
         symbol=SYMBOL,
         interval="3", 
-        limit="480",
-        start_time="1750500000000",
-        end_time="1750586400000"
+        limit="20",
+        start_time="1750734000000",
+        end_time="1750737600000"
         )
     
     if one_day_3_min_candles is not None:
@@ -38,8 +38,8 @@ def main():
         additional_info = {
             "interval": "3min",
             "limit": "480",
-            "start_time": "1749978000000",
-            "end_time": "1750068000000"
+            "start_time": "1751151600000",
+            "end_time": "1751155200000"
         }
         
         json_filename = save_market_data_to_json(
