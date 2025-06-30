@@ -30,7 +30,7 @@ def save_market_data_to_json(data, symbol, filename=None, additional_info=None):
         filename = f"{symbol}_market_data_{timestamp}.json"
     
     # Ensure the dataset directory exists
-    dataset_dir = "../dataset"
+    dataset_dir = "../dataset/testing_data/input"
     if not os.path.exists(dataset_dir):
         os.makedirs(dataset_dir)
     
