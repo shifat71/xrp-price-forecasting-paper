@@ -40,9 +40,15 @@ def main():
         # Save data to JSON file with additional metadata
         additional_info = {
             "interval": "3min",
+<<<<<<< HEAD
             "limit": "20",
             "start_time": st,
             "end_time": et
+=======
+            "limit": "480",
+            "start_time": "1751151600000",
+            "end_time": "1751155200000"
+>>>>>>> 48c8f6f300e025fb8e46d6b7456d66974dcd9110
         }
         
         json_filename = save_market_data_to_json(
